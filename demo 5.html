@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D BLE & Vision Hybrid Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #070a12; color: #f0f4f8; overflow: hidden; height: 100vh; width: 100vw; }
+    
+    #app-container { position: relative; width: 100vw; height: 100vh; }
+    #view-3d-container { position: absolute; inset: 0; background: #000; overflow: hidden; outline: none; z-index: 1; }
+
+    canvas.webgl-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+    .glass-panel {
+      background: rgba(12, 18, 32, 0.82);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(0, 242, 254, 0.25);
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+    }
+
+    #pointer-overlay {
+      position: absolute; inset: 0;
+      background: rgba(5, 8, 16, 0.85);
+      backdrop-filter: blur(4px);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 50; transition: opacity 0.3s ease;
+    }
+
+    #readme-modal {
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .crosshair {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 10px; height: 10px;
+      pointer-events: none; z-index: 20;
+      transition: opacity 0.2s;
+    }
+    .crosshair::before, .crosshair::after {
+      content: ''; position: absolute; background: rgba(0, 242, 254, 0.8);
+    }
+    .crosshair::before { top: 4px; left: 0; width: 10px; height: 2px; }
+    .crosshair::after { top: 0; left: 4px; width: 2px; height: 10px; }
+
+    .hud-stat-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 4px; font-family: 'Courier New', Courier, monospace; }
+    .val-cyan { color: #00f2fe; text-shadow: 0 0 8px rgba(0, 242, 254, 0.4); }
+    .val-gold { color: #ffd600; text-shadow: 0 0 8px rgba(255, 214, 0, 0.4); }
+    .val-red { color: #ff1744; text-shadow: 0 0 8px rgba(255, 23, 68, 0.4); }
+    .val-green { color: #00e676; text-shadow: 0 0 8px rgba(0, 230, 118, 0.4); }
+    .val-magenta { color: #ec4899; text-shadow: 0 0 8px rgba(236, 72, 153, 0.4); }
+    .val-off { color: #64748b; }
+
+    input[type=range] { -webkit-appearance: none; width: 100%; background: #1e293b; height: 5px; border-radius: 3px; outline: none; margin-bottom: 4px;}
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #00f2fe; cursor: pointer; box-shadow: 0 0 10px #00f2fe; }
+    #slider-weight::-webkit-slider-thumb { background: #ec4899; box-shadow: 0 0 10px #ec4899; }
+    
+    .panel-header { font-size: 0.75rem; font-weight: bold; color: #67e8f9; text-transform: uppercase; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; }
+    .render-box { position: relative; border-radius: 8px; border: 1px solid #1e293b; overflow: hidden; background: #000; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
+    
+    .collapsible-content { transition: max-height 0.3s ease-out, opacity 0.3s ease-out; overflow: hidden; max-height: 500px; opacity: 1; }
+    .collapsible-content.collapsed { max-height: 0; opacity: 0; margin: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; border-color: transparent !important; }
+  </style>
+</head>
+<body>
+
+  <div id="app-container">
+    <div id="view-3d-container" tabindex="0">
+      <div class="crosshair"></div>
+    </div>
+
+    <!-- Start Overlay -->
+    <div id="pointer-overlay">
+      <div class="glass-panel p-6 text-center max-w-sm border-cyan-500/50">
+        <div class="text-3xl text-cyan-400 mb-2"><i class="fa-solid fa-gamepad"></i></div>
+        <h1 class="text-lg font-bold text-cyan-300 uppercase tracking-widest mb-2">Hybrid Positioning Simulator</h1>
+        <p class="text-xs text-slate-300 mb-4"><b>Double-click</b> anywhere on the 3D screen to lock mouse & look around. <br><br><b>Double-click again</b> (or ESC) to unlock.</p>
+        <button id="start-btn" class="w-full py-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs uppercase tracking-wider rounded-lg transition shadow-lg shadow-cyan-500/30">
+          <i class="fa-solid fa-play mr-2"></i> Enter 3D Mode
+        </button>
+      </div>
+    </div>
+
+    <!-- README Button -->
+    <button id="btn-open-readme" class="absolute top-4 left-1/2 -translate-x-1/2 z-10 glass-panel px-4 py-2 text-cyan-300 hover:text-cyan-100 hover:bg-cyan-900/30 transition text-xs font-bold uppercase tracking-wider cursor-pointer">
+      <i class="fa-solid fa-book-open mr-1"></i> README
+    </button>
+
+    <!-- README Modal -->
+    <div id="readme-modal" class="hidden absolute inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
+      <div class="glass-panel w-full max-w-2xl max-h-[85vh] flex flex-col border-cyan-400/50">
+        <div class="p-4 border-b border-cyan-500/30 flex justify-between items-center bg-slate-900/50 rounded-t-xl">
+          <h2 class="text-sm font-bold text-cyan-300 uppercase tracking-widest"><i class="fa-solid fa-circle-info mr-2"></i> Simulator Documentation</h2>
+          <button id="btn-close-readme" class="text-slate-400 hover:text-red-400 transition cursor-pointer px-2">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+        <div class="p-6 overflow-y-auto text-sm text-slate-300 space-y-4 custom-scrollbar select-text">
+          <h3 class="text-cyan-400 font-bold border-b border-slate-700 pb-1">1. Environment Overview</h3>
+          <p>This is an advanced 3D real-time simulation of a 12m × 6m indoor environment. It features furnished architecture (desks, sofas, a wall-mounted TV, and dual rotating ceiling fans) combined with a robust <strong>Hybrid Sensor Fusion</strong> tracking pipeline.</p>
+          
+          <h3 class="text-cyan-400 font-bold border-b border-slate-700 pb-1">2. Tracking Architecture</h3>
+          <ul class="list-disc pl-5 space-y-1">
+            <li><b>BLE Beacons (A, B, C, D):</b> Simulates Bluetooth Low Energy RSSI trilateration with configurable noise ($\sigma$) and a 1D Kalman filter to smooth signal fluctuations.</li>
+            <li><b>ArUco Vision Camera:</b> Simulates corner-mounted CCTV cameras tracking visual markers for optical position estimation.</li>
+            <li><b>Sensor Fusion:</b> Dynamically weights camera and BLE positioning outputs via a customizable blending slider.</li>
+          </ul>
+
+          <h3 class="text-cyan-400 font-bold border-b border-slate-700 pb-1">3. Navigation & Controls</h3>
+          <ul class="list-disc pl-5 space-y-1">
+            <li><b>Mouse Look:</b> Double-click inside the 3D viewport to capture your cursor and look around smoothly in First-Person View (FPV). Press <b>ESC</b> or double-click again to release the cursor.</li>
+            <li><b>Movement:</b> Use <b>W, A, S, D</b> or the <b>Arrow Keys</b> to walk through the environment. Collision detection prevents walking through walls and furniture.</li>
+            <li><b>Dashboard Panels:</b> Use the top-left control panel to toggle BLE beacons, vision cameras, and Kalman filters, or adjust noise and sensor weight sliders. You can also upload a custom face texture for the avatar.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= FLOATING HUD PANELS ================= -->
+
+    <!-- 1. Controls Panel -->
+    <div class="glass-panel absolute top-4 left-4 w-72 z-10 text-xs flex flex-col">
+      <div class="panel-header p-3 mb-0 cursor-pointer hover:bg-white/5 transition rounded-t-xl" id="header-controls">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-sliders"></i>
+          <span>Simulator Controls</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="fpv-status-badge" class="px-2 py-0.5 rounded text-[9px] bg-slate-800 text-slate-400 font-mono">STANDBY</span>
+          <i class="fa-solid fa-chevron-up text-cyan-500 transition-transform duration-300" id="icon-controls"></i>
+        </div>
+      </div>
+
+      <div class="collapsible-content p-3 pt-2 space-y-2.5 border-t border-cyan-500/20" id="content-controls">
+        <div class="flex items-center justify-between">
+          <span class="text-slate-300">BLE Beacons:</span>
+          <button id="btn-power" class="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 rounded font-bold transition cursor-pointer">
+            <i class="fa-solid fa-power-off mr-1"></i> OFF
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-slate-300">ArUco Vision Cam:</span>
+          <button id="btn-vision" class="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 rounded font-bold transition cursor-pointer">
+            <i class="fa-solid fa-camera mr-1"></i> OFF
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-slate-300">BLE 1D Kalman Filter:</span>
+          <button id="btn-kalman" class="px-3 py-1 bg-cyan-500/20 text-cyan-300 border border-cyan-500/50 rounded font-bold transition cursor-pointer">
+            <i class="fa-solid fa-filter mr-1"></i> ON
+          </button>
+        </div>
+        
+        <!-- Face Upload -->
+        <div class="flex items-center justify-between border-t border-slate-700/60 pt-2 mt-1">
+          <span class="text-slate-300">Custom Face 3D:</span>
+          <label class="px-3 py-1 bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 border border-cyan-500/50 rounded font-bold transition cursor-pointer text-[10px] uppercase">
+            <i class="fa-solid fa-user-gear mr-1"></i> Upload Face
+            <input type="file" id="face-upload" accept="image/*" class="hidden">
+          </label>
+        </div>
+
+        <div class="space-y-1 border-t border-slate-700/60 pt-2 mt-2">
+          <div>
+            <div class="flex justify-between mb-1 text-[11px]">
+              <span class="text-slate-300">BLE RSSI Noise (&sigma;):</span>
+              <span id="noise-val" class="val-gold font-mono font-bold">1.5 dBm</span>
+            </div>
+            <input type="range" id="slider-noise" min="0" max="5" step="0.1" value="1.5">
+          </div>
+          
+          <div>
+            <div class="flex justify-between mb-1 text-[11px]">
+              <span class="text-slate-300">Fusion Wt (Vis/BLE):</span>
+              <span id="weight-val" class="val-magenta font-mono font-bold">60 / 40</span>
+            </div>
+            <input type="range" id="slider-weight" min="0" max="100" step="1" value="60">
+          </div>
+        </div>
+
+        <div class="pt-1 flex gap-2">
+          <button id="btn-reset-pos" class="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded border border-slate-700 transition font-mono text-[10px] cursor-pointer">
+            <i class="fa-solid fa-arrows-to-dot mr-1"></i> Center Pos
+          </button>
+          <button id="btn-unlock-mouse" class="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition font-mono text-[10px] cursor-pointer">
+            <i class="fa-solid fa-lock-open mr-1"></i> Unlock
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Telemetry Panel -->
+    <div class="glass-panel absolute bottom-4 left-4 w-72 z-10 font-mono text-xs flex flex-col">
+      <div class="panel-header p-3 mb-0 cursor-pointer hover:bg-white/5 transition rounded-t-xl" id="header-telemetry">
+        <div class="flex items-center gap-2 text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
+          <i class="fa-solid fa-satellite-dish"></i>
+          <span>Hybrid Telemetry</span>
+        </div>
+        <i class="fa-solid fa-chevron-up text-cyan-500 transition-transform duration-300" id="icon-telemetry"></i>
+      </div>
+
+      <div class="collapsible-content p-3 pt-1.5 border-t border-slate-700/60 space-y-1" id="content-telemetry">
+        <div class="hud-stat-row"><span>Curr Pos (L,B):</span><span id="hud-true-pos" class="val-green">6.00, 1.50 m</span></div>
+        <div class="hud-stat-row"><span>BLE Est:</span><span id="hud-ble-pos" class="val-off">OFF</span></div>
+        <div class="hud-stat-row"><span>Cam Est:</span><span id="hud-cam-pos" class="val-off">OFF</span></div>
+        <div class="border-t border-slate-800/80 my-1"></div>
+        <div class="hud-stat-row"><span id="hud-fused-label">Fused (60/40):</span><span id="hud-fused-pos" class="val-off">OFF</span></div>
+        <div class="hud-stat-row"><span>Final Error:</span><span id="hud-err" class="val-off">OFF</span></div>
+        <div class="border-t border-slate-800/80 my-1"></div>
+        <div class="hud-stat-row text-[10px] text-slate-400"><span>Dist to Walls (N, S):</span><span id="hud-wall-ns" class="val-cyan">0.00, 0.00 m</span></div>
+        <div class="hud-stat-row text-[10px] text-slate-400"><span>Dist to Walls (W, E):</span><span id="hud-wall-we" class="val-cyan">0.00, 0.00 m</span></div>
+        <div class="hud-stat-row text-[10px] text-slate-400"><span>Distance to Floor:</span><span id="hud-floor" class="val-gold">0.000 m</span></div>
+        <div class="border-t border-slate-800/80 my-1"></div>
+        <div class="hud-stat-row"><span>Stop Pos (L,B,H):</span><span id="hud-stop-pos" class="val-cyan font-bold">6.000, 1.500, 0.000 m</span></div>
+      </div>
+    </div>
+
+    <!-- 3. 2D Map Panel -->
+    <div class="glass-panel absolute top-4 right-4 w-80 z-10 flex flex-col">
+      <div class="panel-header p-3 mb-0 cursor-pointer hover:bg-white/5 transition rounded-t-xl" id="header-map">
+        <div class="flex items-center gap-1.5 text-xs">
+          <i class="fa-solid fa-map"></i>
+          <span>2D Floor Plan</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[9px] bg-cyan-950 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-800">12m x 6m</span>
+          <i class="fa-solid fa-chevron-up text-cyan-500 transition-transform duration-300 ml-1" id="icon-map"></i>
+        </div>
+      </div>
+      
+      <div class="collapsible-content p-3 pt-2 border-t border-cyan-500/20" id="content-map">
+        <div class="render-box w-full aspect-[2/1] bg-slate-950 flex items-center justify-center relative">
+          <canvas id="canvas-2d" class="absolute inset-0 w-full h-full object-contain"></canvas>
+        </div>
+        <div class="mt-2 text-[10px] grid grid-cols-2 gap-1 font-mono text-slate-300">
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span> True Pos</div>
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-pink-500 shadow-[0_0_5px_#ec4899]"></span> Fused</div>
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> BLE Est</div>
+          <div class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span> Vision Est</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Camera View Panel -->
+    <div class="glass-panel absolute bottom-4 right-4 w-80 z-10 flex flex-col">
+      <div class="panel-header p-3 mb-0 cursor-pointer hover:bg-white/5 transition rounded-t-xl" id="header-cam">
+        <div class="flex items-center gap-1.5 text-xs">
+          <i class="fa-solid fa-video"></i>
+          <span>Corner Camera Feeds</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="cam-status" class="text-[9px] bg-red-950 text-red-400 px-1.5 py-0.5 rounded border border-red-800">OFFLINE</span>
+          <i class="fa-solid fa-chevron-up text-cyan-500 transition-transform duration-300 ml-1" id="icon-cam"></i>
+        </div>
+      </div>
+      
+      <div class="collapsible-content p-3 pt-2 border-t border-cyan-500/20" id="content-cam">
+        <div id="cam-view-container" class="render-box w-full aspect-video bg-[#0a0a0a] relative">
+          <div class="absolute top-2 right-2 flex gap-1.5 z-10">
+            <button id="btn-cam1" class="px-2 py-1 bg-cyan-500 text-slate-950 font-bold text-[9px] uppercase rounded border border-cyan-400 transition cursor-pointer">Cam 1 (NW)</button>
+            <button id="btn-cam2" class="px-2 py-1 bg-slate-800 text-slate-300 font-bold text-[9px] uppercase rounded border border-slate-600 transition cursor-pointer">Cam 2 (SE)</button>
+          </div>
+        </div>
+        <div class="mt-2 text-[10px] text-slate-400 font-mono text-center">
+          Tracking ArUco markers for Vision Fusion
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const ROOM = { width: 12.0, depth: 6.0, height: 3.5 };
+    const STEP_SIZE_M = 0.3048; 
+
+    const OBSTACLES = [
+      { id: "Desk", minX: 0.6, maxX: 2.4, minZ: 1.05, maxZ: 1.95 },
+      { id: "Sofa", minX: 4.6, maxX: 7.4, minZ: 3.7, maxZ: 4.7 },
+      { id: "CoffeeTable", minX: 5.3, maxX: 6.7, minZ: 2.65, maxZ: 3.35 },
+      { id: "DiningTable", minX: 8.7, maxX: 10.9, minZ: 2.45, maxZ: 3.55 }
+    ];
+
+    const BEACONS = {
+      'A': { id: 'A', x: 0.2, y: 3.0, z: 0.2, color: 0xff3366, hexStr: '#ff3366' },
+      'B': { id: 'B', x: 11.8, y: 3.0, z: 0.2, color: 0x33ccff, hexStr: '#33ccff' },
+      'C': { id: 'C', x: 0.2, y: 3.0, z: 5.8, color: 0x33ff66, hexStr: '#33ff66' },
+      'D': { id: 'D', x: 11.8, y: 3.0, z: 5.8, color: 0xffcc33, hexStr: '#ffcc33' }
+    };
+
+    const TX_POWER = -59.0;
+    const PATH_LOSS_N = 2.2;
+
+    let isPoweredOn = false; let isVisionOn = false; let useKalmanFilter = true;
+    let noiseStdDev = 1.5; let visionWeight = 0.60; 
+    let smoothedEstX = null; let smoothedEstZ = null; const POS_SMOOTHING_FACTOR = 0.12; 
+    const player = { x: 6.0, z: 1.5, targetX: 6.0, targetZ: 1.5, y: 0.0, yaw: 0.0, pitch: 0.0, walkCycle: 0.0, isMoving: false };
+
+    class KalmanFilter1D {
+      constructor(q = 0.015, r = 2.25) { this.Q = q; this.R = r; this.x = TX_POWER; this.P = 1.0; }
+      update(z) { this.P += this.Q; const K = this.P / (this.P + this.R); this.x += K * (z - this.x); this.P *= (1.0 - K); return this.x; }
+      reset() { this.x = TX_POWER; this.P = 1.0; }
+    }
+    const kalmanFilters = { 'A': new KalmanFilter1D(), 'B': new KalmanFilter1D(), 'C': new KalmanFilter1D(), 'D': new KalmanFilter1D() };
+
+    // --- MAIN 3D SCENE SETUP ---
+    const container3d = document.getElementById('view-3d-container');
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x060911);
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.05, 100); scene.add(camera);
+    
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; container3d.appendChild(renderer.domElement);
+
+    // --- CORNER CCTV CAMERAS SETUP ---
+    const camContainer = document.getElementById('cam-view-container');
+    const camRenderer = new THREE.WebGLRenderer({ antialias: true });
+    const initCamW = 300; const initCamH = 168;
+    camRenderer.setSize(initCamW, initCamH); camRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); camContainer.appendChild(camRenderer.domElement);
+
+    const phoneCamera1 = new THREE.PerspectiveCamera(55, initCamW / initCamH, 0.05, 100);
+    const phoneCamera2 = new THREE.PerspectiveCamera(55, initCamW / initCamH, 0.05, 100);
+    let activePhoneCamera = phoneCamera1; 
+
+    phoneCamera1.position.set(0.5, ROOM.height - 0.2, 0.5); scene.add(phoneCamera1);
+    phoneCamera2.position.set(ROOM.width - 0.5, ROOM.height - 0.2, ROOM.depth - 0.5); scene.add(phoneCamera2);
+
+    const cctvTarget = new THREE.Vector3(player.x, player.y + 1.2, player.z);
+
+    function createProceduralWoodTexture() {
+      const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512;
+      const ctx = canvas.getContext('2d'); ctx.fillStyle = '#2a1a10'; ctx.fillRect(0, 0, 512, 512); const plankHeight = 32;
+      for (let y = 0; y < 512; y += plankHeight) {
+        ctx.fillStyle = (y / plankHeight) % 2 === 0 ? '#382316' : '#2d1c11'; ctx.fillRect(0, y, 512, plankHeight - 2);
+        ctx.fillStyle = 'rgba(15, 8, 4, 0.15)'; for (let i = 0; i < 8; i++) ctx.fillRect(0, y + Math.random() * plankHeight, 512, 1);
+        ctx.fillStyle = '#150a04'; const offset = ((y / plankHeight) % 2) * 128; for (let x = offset; x < 512; x += 256) ctx.fillRect(x, y, 2, plankHeight);
+      }
+      const tex = new THREE.CanvasTexture(canvas); tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(6, 3); return tex;
+    }
+
+    function createArucoTexture(seed) {
+      const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64; const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'white'; ctx.fillRect(0,0,64,64); ctx.fillStyle = 'black'; ctx.fillRect(8,8,48,48); ctx.fillStyle = 'white';
+      for(let i=0; i<5; i++) { for(let j=0; j<5; j++) { let rand = Math.sin(seed + i * 3.1 + j * 7.2); if(rand > 0.1) ctx.fillRect(12 + i*8, 12 + j*8, 8, 8); } }
+      const tex = new THREE.CanvasTexture(canvas); tex.magFilter = THREE.NearestFilter; return tex;
+    }
+
+    const roomGroup = new THREE.Group(); scene.add(roomGroup);
+    const floorMat = new THREE.MeshStandardMaterial({ map: createProceduralWoodTexture(), roughness: 0.4, metalness: 0.1 });
+    const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.width, ROOM.depth), floorMat);
+    floorMesh.rotation.x = -Math.PI / 2; floorMesh.position.set(ROOM.width / 2, 0, ROOM.depth / 2); floorMesh.receiveShadow = true; roomGroup.add(floorMesh);
+
+    const ceilMat = new THREE.MeshStandardMaterial({ color: 0xeeeff2, roughness: 0.9, side: THREE.DoubleSide });
+    const ceilMesh = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.width, ROOM.depth), ceilMat);
+    ceilMesh.rotation.x = Math.PI / 2; ceilMesh.position.set(ROOM.width / 2, ROOM.height, ROOM.depth / 2); roomGroup.add(ceilMesh);
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1f2633, roughness: 0.7, side: THREE.DoubleSide });
+    const wallN = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.width, ROOM.height), wallMat); wallN.position.set(ROOM.width / 2, ROOM.height / 2, 0); roomGroup.add(wallN);
+    const wallS = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.width, ROOM.height), wallMat); wallS.rotation.y = Math.PI; wallS.position.set(ROOM.width / 2, ROOM.height / 2, ROOM.depth); roomGroup.add(wallS);
+    const wallW = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.depth, ROOM.height), wallMat); wallW.rotation.y = Math.PI / 2; wallW.position.set(0, ROOM.height / 2, ROOM.depth / 2); roomGroup.add(wallW);
+    const wallE = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.depth, ROOM.height), wallMat); wallE.rotation.y = -Math.PI / 2; wallE.position.set(ROOM.width, ROOM.height / 2, ROOM.depth / 2); roomGroup.add(wallE);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.45); scene.add(ambientLight);
+    const lightPositions = [ [3.0, 3.0], [9.0, 3.0], [3.0, 4.5], [9.0, 4.5] ];
+    lightPositions.forEach(([lx, lz]) => {
+      const pLight = new THREE.PointLight(0xffeedd, 0.65, 12);
+      pLight.position.set(lx, ROOM.height - 0.2, lz); pLight.castShadow = true; pLight.shadow.mapSize.width = 512; pLight.shadow.mapSize.height = 512; scene.add(pLight);
+    });
+
+    // --- CEILING FANS & TV FURNITURE SETUP ---
+    const rotatingFans = [];
+    function buildRoomFurniture() {
+      const woodMat = new THREE.MeshStandardMaterial({ color: 0x3d281d, roughness: 0.5 }); 
+      const fabricMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 }); 
+      const metalMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.8, roughness: 0.3 });
+      
+      // Desk & Table
+      const desk = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.08, 0.9), woodMat); desk.position.set(1.5, 0.75, 1.5); scene.add(desk);
+      for (let dx of [-0.8, 0.8]) { for (let dz of [-0.35, 0.35]) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.75), metalMat); leg.position.set(1.5 + dx, 0.375, 1.5 + dz); scene.add(leg); } }
+      
+      // Sofa & Coffee Table
+      const sofa = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.45, 1.0), fabricMat); sofa.position.set(6.0, 0.225, 4.2); scene.add(sofa);
+      const sofaBack = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.5, 0.25), fabricMat); sofaBack.position.set(6.0, 0.6, 4.6); scene.add(sofaBack);
+      const coffeeTable = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.35, 0.7), woodMat); coffeeTable.position.set(6.0, 0.175, 3.0); scene.add(coffeeTable);
+      const dTable = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.75, 1.1), woodMat); dTable.position.set(9.8, 0.375, 3.0); scene.add(dTable);
+
+      // --- WALL-MOUNTED TV (In front of Sofa at z: 5.92) ---
+      const tvScreenMat = new THREE.MeshBasicMaterial({ color: 0x050b14 });
+      const tvBezelMat = new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.9, roughness: 0.2 });
+      const tvBody = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.15, 0.08), tvBezelMat);
+      tvBody.position.set(6.0, 2.2, 5.92); scene.add(tvBody);
+      const tvDisplay = new THREE.Mesh(new THREE.PlaneGeometry(1.88, 1.03), tvScreenMat);
+      tvDisplay.position.set(6.0, 2.2, 5.87); scene.add(tvDisplay);
+
+      // --- TWO CEILING FANS ---
+      [ [3.5, 3.0], [8.5, 3.0] ].forEach(([fx, fz]) => {
+        const fanGroup = new THREE.Group();
+        fanGroup.position.set(fx, ROOM.height, fz);
+        
+        // Rod & Motor
+        const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.4), metalMat); rod.position.y = -0.2; fanGroup.add(rod);
+        const motor = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), metalMat); motor.position.y = -0.42; fanGroup.add(motor);
+
+        // Blades
+        const bladesGroup = new THREE.Group();
+        bladesGroup.position.y = -0.48;
+        const bladeMat = new THREE.MeshStandardMaterial({ color: 0xc29b61, roughness: 0.4 });
+        for (let i = 0; i < 3; i++) {
+          const angle = (i * Math.PI * 2) / 3;
+          const blade = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.02, 0.14), bladeMat);
+          blade.position.set(Math.cos(angle) * 0.42, 0, Math.sin(angle) * 0.42);
+          blade.rotation.y = -angle;
+          bladesGroup.add(blade);
+        }
+        fanGroup.add(bladesGroup);
+        rotatingFans.push(bladesGroup);
+        scene.add(fanGroup);
+      });
+    }
+    buildRoomFurniture();
+
+    const beaconMeshes = {}; const beaconRipples = []; let seedCount = 1;
+    Object.keys(BEACONS).forEach(key => {
+      const b = BEACONS[key]; const bGroup = new THREE.Group(); bGroup.position.set(b.x, b.y, b.z);
+      const bBox = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.1), new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.7, roughness: 0.3 })); bGroup.add(bBox);
+      const ledMesh = new THREE.Mesh(new THREE.SphereGeometry(0.04, 16, 16), new THREE.MeshBasicMaterial({ color: b.color })); ledMesh.position.z = 0.06; bGroup.add(ledMesh);
+      const pLight = new THREE.PointLight(b.color, 0.0, 4); pLight.position.z = 0.1; bGroup.add(pLight); scene.add(bGroup);
+      beaconMeshes[key] = { group: bGroup, led: ledMesh, light: pLight, color: b.color };
+
+      const ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.18, 32), new THREE.MeshBasicMaterial({ color: b.color, side: THREE.DoubleSide, transparent: true, opacity: 0 }));
+      ringMesh.rotation.x = -Math.PI / 2; ringMesh.position.set(b.x, 0.02, b.z); scene.add(ringMesh); beaconRipples.push({ mesh: ringMesh, scale: 1.0, maxScale: 4.5, key: key });
+
+      const arucoSize = 0.4; const arucoMat = new THREE.MeshBasicMaterial({ map: createArucoTexture(seedCount++) });
+      const arucoMesh = new THREE.Mesh(new THREE.PlaneGeometry(arucoSize, arucoSize), arucoMat);
+      if (b.z < 1.0) { arucoMesh.position.set(b.x, 1.5, 0.01); } else if (b.z > 5.0) { arucoMesh.position.set(b.x, 1.5, ROOM.depth - 0.01); arucoMesh.rotation.y = Math.PI; } else if (b.x < 1.0) { arucoMesh.position.set(0.01, 1.5, b.z); arucoMesh.rotation.y = Math.PI / 2; } else { arucoMesh.position.set(ROOM.width - 0.01, 1.5, b.z); arucoMesh.rotation.y = -Math.PI / 2; } 
+      scene.add(arucoMesh);
+    });
+
+    // --- CHARACTER RIGGING ---
+    const characterGroup = new THREE.Group(); scene.add(characterGroup);
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xb5835a, roughness: 0.4 }); const shirtMat = new THREE.MeshStandardMaterial({ color: 0xf0f4f8, roughness: 0.6 }); const jeansMat = new THREE.MeshStandardMaterial({ color: 0x3b5b82, roughness: 0.8 }); 
+
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.20, 0.65, 16), shirtMat); torso.position.y = 1.15; characterGroup.add(torso);
+    const headGroup = new THREE.Group(); headGroup.position.y = 1.62; characterGroup.add(headGroup); const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), skinMat); headGroup.add(head);
+    const legLeft = new THREE.Group(); legLeft.position.set(-0.12, 0.8, 0); const legLeftMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.75), jeansMat); legLeftMesh.position.y = -0.375; legLeft.add(legLeftMesh); characterGroup.add(legLeft);
+    const legRight = new THREE.Group(); legRight.position.set(0.12, 0.8, 0); const legRightMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.08, 0.75), jeansMat); legRightMesh.position.y = -0.375; legRight.add(legRightMesh); characterGroup.add(legRight);
+    const armLeft = new THREE.Group(); armLeft.position.set(-0.32, 1.4, 0); const armLeftMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.6), shirtMat); armLeftMesh.position.y = -0.3; armLeft.add(armLeftMesh); characterGroup.add(armLeft);
+    const armRight = new THREE.Group(); armRight.position.set(0.32, 1.4, 0); const armRightMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.6), shirtMat); armRightMesh.position.y = -0.3; armRight.add(armRightMesh); characterGroup.add(armRight);
+
+    // --- 3D REAL HUMAN FACE MESH ---
+    const faceMat = new THREE.MeshStandardMaterial({ map: null, roughness: 0.5, metalness: 0.1 });
+    const faceGeo = new THREE.CylinderGeometry(0.16, 0.13, 0.35, 32, 1, true, -Math.PI / 2, Math.PI);
+    const customFaceMesh = new THREE.Mesh(faceGeo, faceMat);
+    customFaceMesh.position.y = 1.62;
+    customFaceMesh.visible = false;
+    characterGroup.add(customFaceMesh);
+
+    document.getElementById('face-upload').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      const loader = new THREE.TextureLoader();
+      loader.load(url, (texture) => {
+        texture.wrapS = THREE.RepeatWrapping;
+        faceMat.map = texture;
+        faceMat.needsUpdate = true;
+        customFaceMesh.visible = true;
+        head.visible = false;
+      });
+    });
+
+    const cameraBoom = new THREE.Group(); cameraBoom.position.y = 1.4; characterGroup.add(cameraBoom); const cameraTarget = new THREE.Object3D(); cameraTarget.position.set(0, 0.8, -2.5); cameraBoom.add(cameraTarget);
+
+    const bleMarkerMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), new THREE.MeshBasicMaterial({ color: 0xffd600, wireframe: true })); bleMarkerMesh.visible = false; scene.add(bleMarkerMesh);
+    const visionMarkerMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), new THREE.MeshBasicMaterial({ color: 0x00f2fe, wireframe: true })); visionMarkerMesh.visible = false; scene.add(visionMarkerMesh);
+    const fusedMarkerMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.25, 0), new THREE.MeshBasicMaterial({ color: 0xec4899, wireframe: false, transparent: true, opacity: 0.8 })); fusedMarkerMesh.visible = false; scene.add(fusedMarkerMesh);
+
+    // --- UI INTERACTION LOGIC ---
+    const overlay = document.getElementById('pointer-overlay'); const startBtn = document.getElementById('start-btn'); let isPointerLocked = false; 
+    function requestLock() { container3d.focus(); container3d.requestPointerLock(); }
+    startBtn.addEventListener('click', () => { overlay.style.display = 'none'; requestLock(); });
+    container3d.addEventListener('dblclick', () => { overlay.style.display = 'none'; if (!isPointerLocked) requestLock(); else document.exitPointerLock(); });
+
+    document.addEventListener('pointerlockchange', () => {
+      isPointerLocked = (document.pointerLockElement === container3d);
+      const crosshair = document.querySelector('.crosshair');
+      if (isPointerLocked) {
+        document.getElementById('fpv-status-badge').innerText = 'LOCKED (3D)'; document.getElementById('fpv-status-badge').className = 'px-2 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-300 font-mono border border-cyan-700'; crosshair.style.opacity = '1';
+      } else {
+        document.getElementById('fpv-status-badge').innerText = 'UNLOCKED (Cursor)'; document.getElementById('fpv-status-badge').className = 'px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 font-mono'; crosshair.style.opacity = '0.3';
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isPointerLocked) return; const sensitivity = 0.0022;
+      player.yaw -= e.movementX * sensitivity; player.pitch -= e.movementY * sensitivity; player.pitch = Math.max(-Math.PI / 2 + 0.08, Math.min(Math.PI / 2 - 0.08, player.pitch));
+    });
+
+    const keysHeld = {};
+    window.addEventListener('keydown', (e) => { const allowedKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']; if (allowedKeys.includes(e.code)) keysHeld[e.code] = true; });
+    window.addEventListener('keyup', (e) => { keysHeld[e.code] = false; });
+
+    ['controls', 'telemetry', 'map', 'cam'].forEach(id => {
+      document.getElementById(`header-${id}`).addEventListener('click', () => {
+        const content = document.getElementById(`content-${id}`);
+        const icon = document.getElementById(`icon-${id}`);
+        content.classList.toggle('collapsed');
+        icon.style.transform = content.classList.contains('collapsed') ? 'rotate(180deg)' : 'rotate(0deg)';
+        if(id === 'map' || id === 'cam') { setTimeout(triggerResize, 310); }
+      });
+    });
+
+    document.getElementById('btn-open-readme').addEventListener('click', () => { document.exitPointerLock(); document.getElementById('readme-modal').classList.remove('hidden'); });
+    document.getElementById('btn-close-readme').addEventListener('click', () => { document.getElementById('readme-modal').classList.add('hidden'); });
+
+    function triggerResize() {
+      camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); 
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      const mapWrap = document.getElementById('content-map');
+      if(!mapWrap.classList.contains('collapsed')) {
+        canvas2d.width = canvas2d.parentElement.clientWidth; canvas2d.height = canvas2d.parentElement.clientHeight;
+      }
+      const camWrap = document.getElementById('content-cam');
+      if(!camWrap.classList.contains('collapsed')) {
+        phoneCamera1.aspect = camContainer.clientWidth / camContainer.clientHeight; phoneCamera1.updateProjectionMatrix();
+        phoneCamera2.aspect = camContainer.clientWidth / camContainer.clientHeight; phoneCamera2.updateProjectionMatrix(); 
+        camRenderer.setSize(camContainer.clientWidth, camContainer.clientHeight);
+      }
+    }
+    window.addEventListener('resize', triggerResize);
+
+    const canvas2d = document.getElementById('canvas-2d'); const ctx2d = canvas2d.getContext('2d');
+    canvas2d.width = 300; canvas2d.height = 150;
+    
+    function draw2DMap(posTrue, bleEst, visionEst, fusedEst) {
+      if (canvas2d.width === 0 || canvas2d.height === 0) return; 
+      const scaleX = canvas2d.width / ROOM.width; const scaleY = canvas2d.height / ROOM.depth;
+
+      ctx2d.clearRect(0, 0, canvas2d.width, canvas2d.height);
+      ctx2d.strokeStyle = '#1e293b'; ctx2d.lineWidth = 1;
+      for (let x = 0; x <= canvas2d.width; x += scaleX * 2) { ctx2d.beginPath(); ctx2d.moveTo(x, 0); ctx2d.lineTo(x, canvas2d.height); ctx2d.stroke(); }
+      for (let y = 0; y <= canvas2d.height; y += scaleY * 2) { ctx2d.beginPath(); ctx2d.moveTo(0, y); ctx2d.lineTo(canvas2d.width, y); ctx2d.stroke(); }
+      
+      ctx2d.fillStyle = 'rgba(61, 40, 29, 0.6)'; ctx2d.fillRect(0.6 * scaleX, 1.05 * scaleY, 1.8 * scaleX, 0.9 * scaleY); ctx2d.fillRect(4.6 * scaleX, 3.7 * scaleY, 2.8 * scaleX, 1.0 * scaleY); ctx2d.fillRect(5.3 * scaleX, 2.65 * scaleY, 1.4 * scaleX, 0.7 * scaleY); ctx2d.fillRect(8.7 * scaleX, 2.45 * scaleY, 2.2 * scaleX, 1.1 * scaleY); 
+
+      Object.keys(BEACONS).forEach(k => {
+        const b = BEACONS[k]; const bx = b.x * scaleX, by = b.z * scaleY;
+        if (isPoweredOn) { ctx2d.strokeStyle = b.hexStr; ctx2d.lineWidth = 1.5; ctx2d.beginPath(); ctx2d.arc(bx, by, 12 + Math.sin(Date.now() * 0.005) * 3, 0, Math.PI * 2); ctx2d.stroke(); }
+        ctx2d.fillStyle = isPoweredOn ? b.hexStr : '#475569'; ctx2d.beginPath(); ctx2d.arc(bx, by, 7, 0, Math.PI * 2); ctx2d.fill(); ctx2d.fillStyle = '#ffffff'; ctx2d.font = 'bold 10px monospace'; ctx2d.fillText(`${k}`, bx + 10, by + 4);
+      });
+
+      const tx = posTrue.x * scaleX, ty = posTrue.z * scaleY;
+      ctx2d.fillStyle = 'rgba(0, 242, 254, 0.12)'; ctx2d.beginPath();
+      
+      if (activePhoneCamera === phoneCamera1) { ctx2d.moveTo(0.5 * scaleX, 0.5 * scaleY); const ang1 = Math.atan2(ty - 0.5 * scaleY, tx - 0.5 * scaleX); ctx2d.arc(0.5 * scaleX, 0.5 * scaleY, 40, ang1 - 0.3, ang1 + 0.3); } else { ctx2d.moveTo((ROOM.width - 0.5) * scaleX, (ROOM.depth - 0.5) * scaleY); const ang2 = Math.atan2(ty - (ROOM.depth - 0.5) * scaleY, tx - (ROOM.width - 0.5) * scaleX); ctx2d.arc((ROOM.width - 0.5) * scaleX, (ROOM.depth - 0.5) * scaleY, 40, ang2 - 0.3, ang2 + 0.3); }
+      ctx2d.closePath(); ctx2d.fill();
+      
+      ctx2d.fillStyle = '#00e676'; ctx2d.beginPath(); ctx2d.arc(tx, ty, 6, 0, Math.PI * 2); ctx2d.fill(); ctx2d.strokeStyle = '#ffffff'; ctx2d.lineWidth = 2; ctx2d.stroke();
+      if (isPoweredOn && bleEst) { ctx2d.fillStyle = '#ffd600'; ctx2d.beginPath(); ctx2d.arc(bleEst.x * scaleX, bleEst.z * scaleY, 4, 0, Math.PI * 2); ctx2d.fill(); }
+      if (isVisionOn && visionEst) { ctx2d.fillStyle = '#00f2fe'; ctx2d.beginPath(); ctx2d.arc(visionEst.x * scaleX, visionEst.z * scaleY, 4, 0, Math.PI * 2); ctx2d.fill(); }
+      if (fusedEst) {
+        const fx = fusedEst.x * scaleX, fy = fusedEst.z * scaleY; ctx2d.fillStyle = '#ec4899'; ctx2d.beginPath(); ctx2d.arc(fx, fy, 6, 0, Math.PI * 2); ctx2d.fill();
+        ctx2d.strokeStyle = '#ec4899'; ctx2d.lineWidth = 1.5; ctx2d.setLineDash([4, 4]); ctx2d.beginPath(); ctx2d.moveTo(tx, ty); ctx2d.lineTo(fx, fy); ctx2d.stroke(); ctx2d.setLineDash([]);
+      }
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      // Rotate ceiling fans continuously
+      rotatingFans.forEach(fan => { fan.rotation.y += 0.15; });
+
+      const distanceToTarget = Math.hypot(player.targetX - player.x, player.targetZ - player.z);
+      
+      if (distanceToTarget < 0.01) {
+        let moveForward = 0, moveRight = 0;
+        if (keysHeld['KeyW'] || keysHeld['ArrowUp']) moveForward += 1;
+        if (keysHeld['KeyS'] || keysHeld['ArrowDown']) moveForward -= 1;
+        if (keysHeld['KeyA'] || keysHeld['ArrowLeft']) moveRight += 1; 
+        if (keysHeld['KeyD'] || keysHeld['ArrowRight']) moveRight -= 1; 
+
+        if (moveForward !== 0 || moveRight !== 0) {
+          const moveDir = Math.atan2(moveRight, moveForward); const actualAngle = player.yaw + moveDir;
+          let proposedX = player.targetX + Math.sin(actualAngle) * STEP_SIZE_M; let proposedZ = player.targetZ + Math.cos(actualAngle) * STEP_SIZE_M;
+          proposedX = Math.max(0.4, Math.min(ROOM.width - 0.4, proposedX)); proposedZ = Math.max(0.4, Math.min(ROOM.depth - 0.4, proposedZ));
+
+          let hitObject = false; const playerRadius = 0.25;
+          for (let obj of OBSTACLES) { if (proposedX + playerRadius > obj.minX && proposedX - playerRadius < obj.maxX && proposedZ + playerRadius > obj.minZ && proposedZ - playerRadius < obj.maxZ) { hitObject = true; break; } }
+          if (!hitObject) { player.targetX = proposedX; player.targetZ = proposedZ; }
+        }
+      }
+      
+      const currentDist = Math.hypot(player.targetX - player.x, player.targetZ - player.z); const moveSpeed = 0.025; 
+      if (currentDist > 0.001) {
+        player.isMoving = true; const moveStep = Math.min(moveSpeed, currentDist); const moveAngle = Math.atan2(player.targetX - player.x, player.targetZ - player.z);
+        player.x += Math.sin(moveAngle) * moveStep; player.z += Math.cos(moveAngle) * moveStep; player.walkCycle += (moveStep / STEP_SIZE_M) * Math.PI;
+      } else {
+        player.isMoving = false; player.x = player.targetX; player.z = player.targetZ; player.walkCycle = THREE.MathUtils.lerp(player.walkCycle, Math.round(player.walkCycle / Math.PI) * Math.PI, 0.15);
+      }
+
+      const cycle = player.walkCycle; player.y = Math.abs(Math.sin(cycle)) * 0.05; 
+      torso.rotation.y = Math.sin(cycle) * 0.15; torso.rotation.z = Math.sin(cycle) * 0.05; headGroup.rotation.y = -Math.sin(cycle) * 0.15;
+      legLeft.rotation.x = Math.sin(cycle) * 0.7; legLeft.position.y = 0.8 + Math.max(0, Math.sin(cycle)) * 0.08; 
+      legRight.rotation.x = Math.sin(cycle + Math.PI) * 0.7; legRight.position.y = 0.8 + Math.max(0, Math.sin(cycle + Math.PI)) * 0.08; 
+      armLeft.rotation.x = Math.sin(cycle + Math.PI) * 0.6; armRight.rotation.x = Math.sin(cycle) * 0.6;
+
+      characterGroup.position.set(player.x, player.y, player.z); characterGroup.rotation.y = player.yaw; cameraBoom.rotation.x = player.pitch; characterGroup.updateMatrixWorld();
+      
+      const idealCameraPos = new THREE.Vector3(); cameraTarget.getWorldPosition(idealCameraPos);
+      idealCameraPos.x = Math.max(0.2, Math.min(ROOM.width - 0.2, idealCameraPos.x)); idealCameraPos.y = Math.max(0.2, Math.min(ROOM.height - 0.2, idealCameraPos.y)); idealCameraPos.z = Math.max(0.2, Math.min(ROOM.depth - 0.2, idealCameraPos.z));
+      camera.position.copy(idealCameraPos);
+      const boomQuat = new THREE.Quaternion(); cameraBoom.getWorldQuaternion(boomQuat); camera.quaternion.copy(boomQuat); camera.rotateY(Math.PI);
+
+      const posTrue = new THREE.Vector3(player.x, 1.6, player.z);
+      document.getElementById('hud-true-pos').innerText = `${player.x.toFixed(2)}, ${player.z.toFixed(2)} m`;
+      document.getElementById('hud-floor').innerText = `${Math.abs(player.y).toFixed(3)} m`;
+      const distNorth = player.z; const distSouth = ROOM.depth - player.z; const distWest = player.x; const distEast = ROOM.width - player.x;
+      document.getElementById('hud-wall-ns').innerText = `${distNorth.toFixed(2)}, ${distSouth.toFixed(2)} m`; document.getElementById('hud-wall-we').innerText = `${distWest.toFixed(2)}, ${distEast.toFixed(2)} m`;
+
+      if (!player.isMoving) { document.getElementById('hud-stop-pos').innerText = `${player.x.toFixed(3)}, ${player.z.toFixed(3)}, ${player.y.toFixed(3)} m`; document.getElementById('hud-stop-pos').className = 'val-cyan font-bold'; } else { document.getElementById('hud-stop-pos').innerText = `WALKING...`; document.getElementById('hud-stop-pos').className = 'val-gold'; }
+
+      let bleEst = null; let visionEst = null; let fusedEst = null;
+      if (isPoweredOn) {
+        bleMarkerMesh.visible = true; beaconRipples.forEach(r => { r.scale += 0.035; if (r.scale > r.maxScale) r.scale = 0.5; r.mesh.scale.set(r.scale, r.scale, 1); r.mesh.material.opacity = Math.max(0, 0.5 * (1 - r.scale / r.maxScale)); });
+        const estDists = {};
+        Object.keys(BEACONS).forEach(k => {
+          const b = BEACONS[k]; const dTrue = posTrue.distanceTo(new THREE.Vector3(b.x, b.y, b.z));
+          const rssiRaw = TX_POWER - (10.0 * PATH_LOSS_N * Math.log10(Math.max(dTrue, 0.05))) + ((Math.random() - 0.5) * 2 * noiseStdDev);
+          const rssiVal = useKalmanFilter ? kalmanFilters[k].update(rssiRaw) : rssiRaw;
+          estDists[k] = Math.pow(10, (TX_POWER - rssiVal) / (10.0 * PATH_LOSS_N));
+        });
+        let rawEstX = 0, rawEstZ = 0, totalW = 0;
+        Object.keys(BEACONS).forEach(k => { const b = BEACONS[k]; const w = 1.0 / Math.pow(Math.max(estDists[k], 0.1), 2.0); rawEstX += b.x * w; rawEstZ += b.z * w; totalW += w; });
+        rawEstX = rawEstX / totalW; rawEstZ = rawEstZ / totalW;
+        if (smoothedEstX === null || !useKalmanFilter) { smoothedEstX = rawEstX; smoothedEstZ = rawEstZ; } else { smoothedEstX += (rawEstX - smoothedEstX) * POS_SMOOTHING_FACTOR; smoothedEstZ += (rawEstZ - smoothedEstZ) * POS_SMOOTHING_FACTOR; }
+        bleEst = new THREE.Vector3(smoothedEstX, 0.2, smoothedEstZ); bleMarkerMesh.position.set(bleEst.x, 0.5, bleEst.z); bleMarkerMesh.rotation.y += 0.03;
+        document.getElementById('hud-ble-pos').innerText = `${bleEst.x.toFixed(2)}, ${bleEst.z.toFixed(2)} m`; document.getElementById('hud-ble-pos').className = 'val-gold font-bold';
+      } else { bleMarkerMesh.visible = false; beaconRipples.forEach(r => r.mesh.material.opacity = 0); document.getElementById('hud-ble-pos').innerText = 'OFF'; document.getElementById('hud-ble-pos').className = 'val-off'; }
+
+      if (isVisionOn) {
+        visionMarkerMesh.visible = true; const visionNoise = 0.15; const vX = posTrue.x + (Math.random() - 0.5) * 2 * visionNoise; const vZ = posTrue.z + (Math.random() - 0.5) * 2 * visionNoise;
+        visionEst = new THREE.Vector3(vX, 0.2, vZ); visionMarkerMesh.position.set(visionEst.x, 0.5, visionEst.z); visionMarkerMesh.rotation.y += 0.03;
+        document.getElementById('hud-cam-pos').innerText = `${visionEst.x.toFixed(2)}, ${visionEst.z.toFixed(2)} m`; document.getElementById('hud-cam-pos').className = 'val-cyan font-bold';
+      } else { visionMarkerMesh.visible = false; document.getElementById('hud-cam-pos').innerText = 'OFF'; document.getElementById('hud-cam-pos').className = 'val-off'; }
+
+      if (isPoweredOn && isVisionOn) { fusedEst = new THREE.Vector3((visionEst.x * visionWeight) + (bleEst.x * (1.0 - visionWeight)), 0.2, (visionEst.z * visionWeight) + (bleEst.z * (1.0 - visionWeight)));
+      } else if (isPoweredOn) { fusedEst = new THREE.Vector3(bleEst.x, 0.2, bleEst.z);
+      } else if (isVisionOn) { fusedEst = new THREE.Vector3(visionEst.x, 0.2, visionEst.z); }
+
+      if (fusedEst) {
+        fusedMarkerMesh.visible = true; fusedMarkerMesh.position.set(fusedEst.x, 0.5, fusedEst.z); const errorDist = Math.hypot(posTrue.x - fusedEst.x, posTrue.z - fusedEst.z);
+        document.getElementById('hud-fused-pos').innerText = `${fusedEst.x.toFixed(2)}, ${fusedEst.z.toFixed(2)} m`; document.getElementById('hud-fused-pos').className = 'val-magenta font-bold';
+        document.getElementById('hud-err').innerText = `${errorDist.toFixed(2)} m`; document.getElementById('hud-err').className = 'val-red font-bold';
+      } else { fusedMarkerMesh.visible = false; document.getElementById('hud-fused-pos').innerText = 'OFF'; document.getElementById('hud-fused-pos').className = 'val-off'; document.getElementById('hud-err').innerText = 'OFF'; document.getElementById('hud-err').className = 'val-off'; }
+
+      draw2DMap(posTrue, bleEst, visionEst, fusedEst);
+      const idealCctvTarget = new THREE.Vector3(player.x, player.y + 1.2, player.z); cctvTarget.lerp(idealCctvTarget, 0.04); phoneCamera1.lookAt(cctvTarget); phoneCamera2.lookAt(cctvTarget);
+      renderer.render(scene, camera); 
+      if(isVisionOn && !document.getElementById('content-cam').classList.contains('collapsed')) { camRenderer.render(scene, activePhoneCamera); }
+    }
+    animate();
+
+    const btnCam1 = document.getElementById('btn-cam1'); const btnCam2 = document.getElementById('btn-cam2');
+    btnCam1.addEventListener('click', () => { activePhoneCamera = phoneCamera1; btnCam1.className = "px-2 py-1 bg-cyan-500 text-slate-950 font-bold text-[9px] uppercase rounded border border-cyan-400 transition cursor-pointer"; btnCam2.className = "px-2 py-1 bg-slate-800 text-slate-300 font-bold text-[9px] uppercase rounded border border-slate-600 transition cursor-pointer"; });
+    btnCam2.addEventListener('click', () => { activePhoneCamera = phoneCamera2; btnCam2.className = "px-2 py-1 bg-cyan-500 text-slate-950 font-bold text-[9px] uppercase rounded border border-cyan-400 transition cursor-pointer"; btnCam1.className = "px-2 py-1 bg-slate-800 text-slate-300 font-bold text-[9px] uppercase rounded border border-slate-600 transition cursor-pointer"; });
+
+    document.getElementById('btn-power').addEventListener('click', (e) => {
+      isPoweredOn = !isPoweredOn; const btn = e.target.closest('button');
+      if (isPoweredOn) { btn.innerHTML = '<i class="fa-solid fa-power-off mr-1"></i> ON'; btn.className = 'px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 rounded font-bold transition cursor-pointer'; Object.keys(beaconMeshes).forEach(k => { beaconMeshes[k].light.intensity = 1.2; }); Object.values(kalmanFilters).forEach(f => f.reset()); smoothedEstX = null; 
+      } else { btn.innerHTML = '<i class="fa-solid fa-power-off mr-1"></i> OFF'; btn.className = 'px-3 py-1 bg-red-500/20 text-red-400 border border-red-500/50 rounded font-bold transition cursor-pointer'; Object.keys(beaconMeshes).forEach(k => { beaconMeshes[k].light.intensity = 0.0; }); }
+    });
+
+    document.getElementById('btn-vision').addEventListener('click', (e) => {
+      isVisionOn = !isVisionOn; const btn = e.target.closest('button'); const camStatus = document.getElementById('cam-status');
+      if (isVisionOn) { btn.innerHTML = '<i class="fa-solid fa-camera mr-1"></i> ON'; btn.className = 'px-3 py-1 bg-cyan-500/20 text-cyan-400 border border-cyan-500/50 rounded font-bold transition cursor-pointer'; camStatus.innerText = "ACTIVE"; camStatus.className = "text-[9px] bg-cyan-950 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-800";
+      } else { btn.innerHTML = '<i class="fa-solid fa-camera mr-1"></i> OFF'; btn.className = 'px-3 py-1 bg-red-500/20 text-red-400 border border-red-500/50 rounded font-bold transition cursor-pointer'; camStatus.innerText = "OFFLINE"; camStatus.className = "text-[9px] bg-red-950 text-red-400 px-1.5 py-0.5 rounded border border-red-800"; const gl = camRenderer.getContext(); gl.clearColor(0.0, 0.0, 0.0, 1.0); gl.clear(gl.COLOR_BUFFER_BIT); }
+    });
+
+    document.getElementById('btn-kalman').addEventListener('click', (e) => { useKalmanFilter = !useKalmanFilter; const btn = e.target.closest('button'); btn.innerHTML = `<i class="fa-solid fa-filter mr-1"></i> ${useKalmanFilter ? 'ON' : 'OFF'}`; btn.className = `px-3 py-1 ${useKalmanFilter ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50' : 'bg-slate-800 text-slate-400 border-slate-700'} border rounded font-bold transition cursor-pointer`; });
+    document.getElementById('slider-noise').addEventListener('input', (e) => { noiseStdDev = parseFloat(e.target.value); document.getElementById('noise-val').innerText = `${noiseStdDev.toFixed(1)} dBm`; });
+    document.getElementById('slider-weight').addEventListener('input', (e) => { const vWeight = parseInt(e.target.value); const bWeight = 100 - vWeight; visionWeight = vWeight / 100.0; document.getElementById('weight-val').innerText = `${vWeight} / ${bWeight}`; document.getElementById('hud-fused-label').innerText = `Fused (${vWeight}/${bWeight}):`; });
+    document.getElementById('btn-reset-pos').addEventListener('click', () => { player.x = 6.0; player.z = 1.5; player.targetX = 6.0; player.targetZ = 1.5; player.yaw = 0; player.pitch = 0; });
+    document.getElementById('btn-unlock-mouse').addEventListener('click', () => { document.exitPointerLock(); });
+    
+    setTimeout(triggerResize, 100);
+  </script>
+</body>
+</html>
